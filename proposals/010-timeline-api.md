@@ -6,7 +6,7 @@
 
 ## Summary
 
-The Timeline is a media-type-agnostic model of a publication's structure, built from its reading order and table of contents and augmented by a navigator with the format-specific data it depends on — a Positions List for EPUB, native page numbers for PDF, track durations for audio — exposing a single API to locate, traverse, and inspect that structure regardless of format.
+The Timeline is a media-type-agnostic model of a publication's structure, built from its reading order and table of contents, with locations filled in from whatever format-specific data is available — a Positions List for EPUB, native page numbers for PDF, track durations for audio — and refined further as a navigator feeds in whatever format-specific data it itself holds. It exposes a single API to locate, traverse, and inspect that structure regardless of format.
 
 ## Motivation
 
@@ -14,7 +14,7 @@ Reading apps constantly need to tell the user *where they are*: the chapter titl
 
 Today every app rebuilds it by reconciling information scattered across several differently-shaped pieces — the reading order, the table of contents, and whatever format-specific data is needed to pin down an actual location, such as a Positions List for EPUB or track durations for audio — none of which was designed on its own to answer "which entry covers a given location?". And how a location is expressed depends on the format: a time offset for audio, an anchor or progression for reflowable text, a page for PDF. So the same reconciliation logic gets written again and again, per format and per platform.
 
-The Timeline does that reconciliation in the toolkit instead of in every app: built from the reading order and table of contents, then augmented by a navigator with whatever format-specific data it needs, it gives an app a single structural view of the publication against which to ask a few simple questions and get the same kind of answer regardless of format.
+The Timeline does that reconciliation in the toolkit instead of in every app: built from the reading order and table of contents, with locations filled in from whatever format-specific data is on hand and refined further as better data shows up, it gives an app a single structural view of the publication against which to ask a few simple questions and get the same kind of answer regardless of format.
 
 ### Use cases
 
@@ -29,22 +29,22 @@ The Timeline does that reconciliation in the toolkit instead of in every app: bu
 
 A **Timeline** is a publication's structure in reading order: its resources and the sections within them, each one a **TimelineItem** carrying the means to locate where it starts, and a title when one could be derived.
 
-A publication exposes a timeline directly, which is enough for anything that does not depend on rendered content — a table-of-contents view, a chapter list. A navigator also exposes one, and is the better source while reading: it notifies a listener whenever the active item changes, and it augments the timeline with the format-specific data — a Positions List, track durations — that only it has access to.
+A publication exposes a timeline directly — `publication.timeline`, the only instance there is — already carrying whatever an item's resolvable fields — `position`, `scroll`, `role` — a Positions List, native page numbers, or track durations could fill in: enough for anything that does not depend on rendered content, e.g. a table-of-contents view or a chapter list. While reading, a navigator operating on that same `Publication` notifies a listener whenever the active item changes, and can feed in or refine any of those fields with whatever format-specific data it itself has access to.
 
 An app passes a locator, or a plain fraction; it never passes a format. Deciding how to interpret a locator — by time, by anchor, by progression — is the timeline's responsibility, and is precisely what keeps the rest of the app free of per-format branching.
 
-### Augmenting the timeline with format-specific data
+### Refining the timeline with format-specific data
 
-A `TimelineItem` built from the reading order and table of contents alone has no `position` or `scroll`: those depend on data a navigator, not a publication, has access to. A navigator supplies that data by calling `augment` with a mapper from item and manifest `Link` to the fields it can resolve. Each call overwrites the fields it returns, so a later call always reflects the latest data.
+A `TimelineItem`'s resolvable fields — `position`, `scroll`, `role` — start out at whatever a Positions List, native page numbers, track durations, or other structural data already resolved for them, wherever that's attached to the publication. A navigator feeds fields into the timeline the same way, calling `augment` with a mapper from item and manifest `Link` to whichever fields it has data for — the same publication-level data, or, when nothing resolved a field yet, its own parsing of the format. Each call overwrites the fields it returns, so a later call always reflects the latest data; fields a mapper doesn't return keep whatever value they already had, whatever gave them that value.
 
 ```swift
-navigator.timeline.augment { item, link in
+publication.timeline.augment { item, link in
     guard let entry = positionsList.first(where: { $0.href == link.href }) else { return TimelineItem() }
     return TimelineItem(position: entry.locations.position, scroll: entry.locations.progression)
 }
 ```
 
-Without this step, `position` and `scroll` stay unset, and features that depend on them — a page number next to a TOC entry, a scroll offset for a mid-resource entry — have nothing to show.
+A field that no service ever resolved and no navigator ever fed in stays unset, and features that depend on it — a page number next to a TOC entry, a scroll offset for a mid-resource entry — have nothing to show.
 
 ### Which item covers this locator?
 
@@ -120,7 +120,7 @@ Highlighting the entry matching the current reading position is a common compani
 class TocPanelObserver: TimelineObserver {
     func onActiveItemChanged(item: TimelineItem?) {
         guard let item = item else { return clearHighlight() }
-        let entry = navigator.timeline.tocEntryFor(item)
+        let entry = publication.timeline.tocEntryFor(item)
         highlight(entry?.link)
     }
 }
@@ -191,8 +191,8 @@ The structural view itself, and the questions it answers. Built once from a publ
 #### Methods
 
 * `augment(mapper: (TimelineItem, Link) -> Partial<TimelineItem>)`
-  * Applies `mapper` to every item, resolving `position`, `scroll`, and `role` from format-specific data the mapper has access to (e.g. a Positions List, track durations). Other fields returned by `mapper` are ignored.
-  * Each field the mapper returns overwrites the item's current value; calling `augment` again refreshes it with the latest data.
+  * Applies `mapper` to every item, refining whichever of its resolvable fields — `position`, `scroll`, `role` — the mapper has data for, whether or not something already resolved them. Other fields returned by `mapper` are ignored.
+  * Each field the mapper returns overwrites the item's current value, whatever its source; calling `augment` again refreshes it with the latest data.
 * `locate(locator: Locator) -> TimelineItem?`
   * The most specific item covering `locator`, or none when it falls outside the structure.
 * `adjacentTo(item: TimelineItem) -> Adjacency`
@@ -237,17 +237,12 @@ A table-of-contents entry mirroring the publication's authored `toc` hierarchy, 
 ### `Publication` Helpers
 
 * (lazy) `timeline: Timeline`
-  * The publication's timeline, built once from its reading order and table of contents.
+  * The publication's timeline, built once from its reading order and table of contents, with each item's resolvable fields (`position`, `scroll`, `role`) already filled in from whatever attached services (a Positions List, native page numbers, track durations) could resolve.
   * Enough for anything that does not depend on rendered content, e.g. a chapter list shown before a book is opened in a navigator.
 
 ### Navigator
 
-A navigator exposes the publication's timeline (possibly enriched) and lets an app register an observer for the active item.
-
-#### Properties
-
-* (lazy) `timeline: Timeline`
-  * The timeline, augmented with the format-specific data it depends on — e.g. a Positions List for EPUB, native page numbers for PDF, track durations for audio.
+A navigator operates on the `Publication` it's navigating — there is only one `Timeline`, `publication.timeline`; a navigator calls `augment` on it directly, and lets an app register an observer for the active item.
 
 #### Methods
 
@@ -272,7 +267,7 @@ The Timeline is a best-effort model: every operation returns the best available 
 
 * Collapsing a time offset, a Positions List position, and a page number into a single `position` value keeps the rest of the API format-agnostic, but a consumer that wants to interpret the value rather than just display it still needs to know the publication's profile — the abstraction doesn't fully hide the format for that use case.
 * The reading-order-anchored `TimelineItem` tree and the authored `contextualizedToc` hierarchy can diverge. A location falling between two authored TOC entries has no exact counterpart in the second view, only a nearest-preceding one.
-* Structure and position data are resolved independently, so a `Timeline` can be fully built with no `position`/`scroll` populated at all if nothing ever augments it. The API has no way to signal that difference to a consumer: an unset field looks the same whether augmentation hasn't run yet or the data genuinely doesn't exist.
+* Structure and an item's resolvable fields are resolved independently, so a `Timeline` can be fully built with none of `position`, `scroll`, or `role` populated at all if no service resolved any and no navigator has refined any either. The API has no way to signal that difference to a consumer: an unset field looks the same whether nothing has run yet or the data genuinely doesn't exist.
 
 ## Future Possibilities
 
@@ -286,4 +281,4 @@ The Timeline is purely structural and stateless: it has no notion of which items
 
 ### Time Remaining in an Item or the Book
 
-Positions and durations already flow through `augment`, but no member of `Timeline` or `TimelineItem` turns that into an estimate of time left in the current chapter or the book as a whole — a very common reading-app affordance that this proposal, as it stands, cannot answer.
+Positions and durations already flow into `Timeline` through services and `augment`, but no member of `Timeline` or `TimelineItem` turns that into an estimate of time left in the current chapter or the book as a whole — a very common reading-app affordance that this proposal, as it stands, cannot answer.
