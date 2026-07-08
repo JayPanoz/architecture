@@ -2,7 +2,7 @@
 
 * Author: [Jiminy Panoz](https://github.com/JayPanoz)
 * Contributors: [Hadrien Gardeur](https://github.com/HadrienGardeur), [Mickaël Menu](https://github.com/mickael-menu)
-* Review PR: N/A
+* Review PR: [196](https://github.com/readium/architecture/pull/196)
 
 ## Summary
 
