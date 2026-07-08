@@ -1,6 +1,7 @@
 # Decorator API
 
 * Author: [Mickaël Menu](https://github.com/mickael-menu)
+* Contributor: [Jiminy Panoz](https://github.com/JayPanoz)
 * Review PR: [#160](https://github.com/readium/architecture/pull/160)
 
 ## Summary
@@ -16,9 +17,12 @@ A variety of features need to draw user interface elements (decorations) over a 
 * underlining spoken text with speech synthesis
 * annotating a piece of content with an icon or button
 * drawing side marks in the margin
+* marking a passage as struck through, e.g. crossing out a wrong answer in a workbook
+* marking a selection without obscuring the underlying text, with an outline
+* dimming everything but a selection, for a focus/reader mode
+* recoloring text directly
 
 The actual rendering routines depend on the media type of the decorated resources. We can simplify reading apps significantly by providing a media type agnostic Navigator API to handle decorations.
-
 
 ## Developer Guide
 
@@ -72,13 +76,34 @@ To handle user clicks/taps on a decoration, implement the `DecorationObserver` i
 
 ```swift
 class MyObserver: DecorationObserver {
-    func onDecorationActivated(event: OnActivatedEvent) -> Boolean {
+    func onDecorationActivated(event: OnDecorationEvent) -> Boolean {
         // Present a highlight pop-up for `event.decoration`, for example.
     }
 }
 ```
 
 Then, register your observer for the group of decorations you want to be interactive.
+
+```swift
+navigator.registerDecorationObserver(group: "user-highlights", observer: MyObserver())
+```
+
+### Handling Hover
+
+To track hover interactions, implement `onDecorationPointerEnter` and/or `onDecorationPointerLeave`:
+
+```swift
+class MyObserver: DecorationObserver {
+    func onDecorationPointerEnter(event: OnDecorationEvent) -> Boolean {
+        // Show a popup with options for `event.decoration`, for example.
+    }
+    func onDecorationPointerLeave(event: OnDecorationEvent) -> Boolean {
+        // Dismiss the popup.
+    }
+}
+```
+
+Then, register your observer the same way as for activation.
 
 ```swift
 navigator.registerDecorationObserver(group: "user-highlights", observer: MyObserver())
@@ -136,18 +161,22 @@ You should check whether the Navigator supports drawing the decoration styles re
 
 ```swift
 navigator.supportsDecorationStyle(Decoration.Style.Underline)
+navigator.supportsDecorationStyle(Decoration.Style.TextColor)
 ```
 
 ### Backward Compatibility and Migration
 
 #### Kotlin
 
-The Readium Kotlin toolkit currently ships with a highlighting API. It will be deprecated in favor of the new Decorator API. The old APIs will internally use the Decorator implementation, so it will not be a breaking change.
+The Readium Kotlin toolkit already implements this API, including `isActive`. Removing it is a breaking change; existing usages should switch to `HighlightUnderline` where a highlight was combined with an underline. Its existing `OnActivatedEvent` class must be renamed to `OnDecorationEvent`, another breaking change. The new built-in styles, `enforceContrast`, `expand`, and hover support are additive and still need to be implemented.
 
 #### Swift
 
-The Readium Swift toolkit did not yet have decoration capabilities, so there's no impact on existing implementations.
+The Readium Swift toolkit already implements this API, including `isActive`. Removing it is a breaking change; existing usages should switch to `HighlightUnderline` where a highlight was combined with an underline. Its existing `OnActivatedEvent` class must be renamed to `OnDecorationEvent`, another breaking change. The new built-in styles, `enforceContrast`, `expand`, and hover support are additive and still need to be implemented.
 
+#### TypeScript
+
+The Readium TypeScript toolkit already implements this proposal in full, including the new built-in styles, `enforceContrast`, `expand`, and hover support. Its existing `OnActivatedEvent`, `OnPointerEnterEvent`, and `OnPointerLeaveEvent` classes must be consolidated into a single `OnDecorationEvent` class, a breaking change.
 
 ## Reference Guide
 
@@ -175,18 +204,24 @@ Receives interaction events for decorations.
 
 #### Methods
 
-* `onDecorationActivated(event: OnActivatedEvent) -> Boolean`
+* `onDecorationActivated(event: OnDecorationEvent) -> Boolean`
     * Called when the user activates a decoration, e.g. with a click or tap.
     * Returns whether the observer handled the interaction.
+* `onDecorationPointerEnter(event: OnDecorationEvent) -> Boolean`
+    * Called when the pointer enters a decoration.
+    * Returns whether the observer handled the interaction.
+* `onDecorationPointerLeave(event: OnDecorationEvent) -> Boolean`
+    * Called when the pointer leaves a decoration.
+    * Returns whether the observer handled the interaction.
 
-#### `OnActivatedEvent` Class
+#### `OnDecorationEvent` Class
 
-Holds the metadata about a decoration activation interaction.
+Holds the metadata about a decoration interaction (activation, pointer enter or pointer leave).
 
 ##### Properties
 
 * `decoration: Decoration`
-    * Activated decoration.
+    * Decoration involved in the interaction.
 * `group: String`
     * Name of the group the decoration belongs to.
 * `rect: Rect?`
@@ -215,10 +250,17 @@ For example, decorations can be used to draw highlights, images or buttons.
 
 The Decoration Style determines the look and feel of a decoration once rendered by a Navigator. It is media type agnostic, meaning that each Navigator will translate the style into a set of rendering instructions which makes sense for the resource type.
 
-The Readium toolkit supports two default styles:
+The Readium toolkit supports the following default styles:
 
-* `Highlight(tint: Color?, isActive: Boolean)`
-* `Underline(tint: Color?, isActive: Boolean)`
+* `Highlight(tint: Color?)`
+* `HighlightUnderline(tint: Color?)`
+* `Underline(tint: Color?)`
+* `Strikethrough(tint: Color?)`
+* `Outline(tint: Color?)`
+* `TextColor(tint: Color?)`
+* `Mask(tint: Color?)`
+
+All of the above additionally support `enforceContrast: Boolean` (default `true`), which automatically adjusts the tint for legibility against the current background color, and `expand: Double` (default `0`), which inflates each client rect outward by this many CSS pixels on all sides.
 
 **Note**: This can be implemented differently depending on the platform capabilities. Ideally, this is a marker interface and each concrete type is used to identify the style.
 
@@ -261,12 +303,19 @@ An `HTMLDecorationTemplate` renders a `Decoration` into a set of HTML elements a
 | `page`                    | ![](assets/008-boxes-page.png)     | ![](assets/008-bounds-page.png)     |
 | `viewport`                | ![](assets/008-boxes-viewport.png) | ![](assets/008-bounds-viewport.png) |
 
+## Drawbacks and Limitations
+
+* `TextColor` requires the CSS Custom Highlight API and has no DOM-overlay fallback; unsupported browsers report `false` from `supportsDecorationStyle` and render nothing.
+* `TextColor` cannot target non-text content (images, inline SVG, audio, video); decorations covering such content render nothing.
+* `TextColor` does not support `width: viewport`: expanding ranges to emulate it was attempted and abandoned, since the CSS Custom Highlight API merges adjacent expanded ranges into a single continuous highlight, collapsing per-column highlights (e.g. across a two-column layout) into one. `width: bounds` and `width: page` are supported by expanding the underlying range's boundaries — to the selection's own bounding rect for `bounds`, or to the full page/column inline extent for `page`.
+* `TextColor` bounds/page expansion is unreliable in vertical writing modes (`vertical-rl`, `vertical-lr`), due to browser bugs in caret-position lookup at a given point.
+* All `Mask` decorations sharing a group share a single overlay and a single tint, taken from the first decoration applied in the group.
 
 ## Future Possibilities
 
 ### Rendering Images and Text
 
-This proposal introduces only two default styles: highlight and underline. These are useful for the main use cases of Readium: highlights, search and TTS. However, the API is generic enough to represent any kind of decorations.
+This proposal introduces only a handful of default styles. These are useful for the main use cases of Readium: highlights, search, TTS, proofreading and focus modes. However, the API is generic enough to represent any kind of decorations.
 
 In particular, reading apps might be interested in drawing images or text. Offering a generic style for such decorations could prove challenging because we need the layout, style and positioning to be flexible enough while still being media-type agnostic.
 
@@ -320,14 +369,12 @@ For example, we can "highlight" a portion of an audio resource by raising the vo
 
 ### Additional Interactions
 
-This proposal introduces only a single decoration interaction: *activation*. Here are some examples of additional interactions that could be implemented:
+This proposal introduces two decoration interactions: *activation* and *hover*. Here are some examples of additional interactions that could be implemented:
 
 * secondary interactions (press and hold)
-* hints (hover)
 
 ### A new HTML template layout for continuous boxes bounds
 
 The specified HTML template layouts are not sufficient to render side marks when two columns are enabled. If a locator is overlapping both columns, using `bounds` would result in a decoration spanning the whole viewport.
 
 We could solve this by adding a third layout for "continuous boxes bounds", which would coalesce boxes together only if they are close enough. This requires some heuristics and is not so straightforward to implement.
-
