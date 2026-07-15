@@ -26,7 +26,7 @@ These modules are not necessarily meant to be deployed on the same device or wri
 * [Readium Web Publication Manifest](https://readium.org/webpub-manifest)
 * [Guided Navigation](https://readium.org/guided-navigation)
 * [Locators](models/locators)
-* [OPDS 2.0](https://drafts.opds.io/opds-2.0) (maintained by the OPDS Community)
+* [OPDS 2.0](https://specs.opds.io/opds-2.0) (maintained by the OPDS Community)
 
 ### Services
 
