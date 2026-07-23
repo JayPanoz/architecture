@@ -69,7 +69,7 @@ For previous/next navigation, and for reaching the manifest entry needed to actu
 
 ```swift
 if let here = timeline.locate(currentLocator) {
-    let adjacency = timeline.adjacentTo(here)
+    let adjacency = timeline.navigableFrom(here)
     prevButton.title = adjacency.previous?.title
     nextButton.title = adjacency.next?.title
 
@@ -195,8 +195,9 @@ The structural view itself, and the questions it answers. Built once from a publ
   * Each field the mapper returns overwrites the item's current value, whatever its source; calling `augment` again refreshes it with the latest data.
 * `locate(locator: Locator) -> TimelineItem?`
   * The most specific item covering `locator`, or none when it falls outside the structure.
-* `adjacentTo(item: TimelineItem) -> Adjacency`
+* `navigableFrom(item: TimelineItem) -> Adjacency`
   * The previous and next items in reading order; either may be absent at a boundary.
+  * A Navigator may resolve `item` against its own live rendering state before calling this, e.g. to step past a fragment that only duplicates its container's own starting position.
 * `segmentsForHref(href: String) -> List<TimelineItem>`
   * The entries within a resource — its sections, or the resource itself when it has none.
 * `ancestors(item: TimelineItem) -> List<TimelineItem>`
@@ -209,7 +210,7 @@ The structural view itself, and the questions it answers. Built once from a publ
 
 #### `Adjacency` Class
 
-The result of `adjacentTo`, a named pair so it carries across platforms rather than relying on a structural return type.
+The result of `navigableFrom`, a named pair so it carries across platforms rather than relying on a structural return type.
 
 ##### Properties
 
